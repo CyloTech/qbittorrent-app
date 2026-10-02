@@ -43,7 +43,12 @@ def volume(label):
     return name
 
 def api(name, path, data=None, extra=None):
-    args = ["docker", "exec", "-i", name, "/usr/bin/curl", "-fsS", "--max-time", "10"]
+    run(["docker", "exec", "-i", name, "/usr/bin/curl", "-fsS", "--max-time", "10",
+         "--cookie-jar", "/tmp/release-gate-cookie", "--data-binary", "@-",
+         "http://127.0.0.1:8080/api/v2/auth/login"],
+        data="username=admin&password=" + PASSWORD, timeout=20)
+    args = ["docker", "exec", "-i", name, "/usr/bin/curl", "-fsS", "--max-time", "10",
+            "--cookie", "/tmp/release-gate-cookie"]
     if data is not None:
         args.extend(["--data-binary", "@-"])
     args.extend(extra or [])
@@ -83,15 +88,18 @@ def verify(name):
         raise RuntimeError("qBittorrent process is not UID 1000")
     # Exercise authentication through the container address, outside the localhost bypass.
     ip = run(["docker", "inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", name])
-    login = ["docker", "exec", "-i", name, "/usr/bin/curl", "-fsS", "--max-time", "10",
+    login = ["docker", "exec", "-i", name, "/usr/bin/curl", "-sS", "--max-time", "10",
+             "-o", "/dev/null", "-w", "%{http_code}",
              "--data-binary", "@-", "http://" + ip + ":8080/api/v2/auth/login"]
-    if run(login, data="username=admin&password=incorrect-release-gate-password") != "Fails.":
+    if run(login, data="username=admin&password=incorrect-release-gate-password") not in ("401", "403"):
         raise RuntimeError("Incorrect password was accepted")
-    if run(login, data="username=admin&password=" + PASSWORD) != "Ok.":
+    if run(login, data="username=admin&password=" + PASSWORD) not in ("200", "204"):
         raise RuntimeError("Configured password login failed")
     if run(["docker", "exec", name, "stat", "-c", "%u:%g", "/torrents/config/qBittorrent/qBittorrent.conf"]) != "1000:1000":
         raise RuntimeError("Configuration ownership mismatch")
     run(["docker", "exec", name, "/usr/bin/curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8080/"])
+    run(["docker", "exec", name, "python3", "-c",
+         "import os,qbittorrentapi; c=qbittorrentapi.Client(host='localhost:8080',username='admin',password=os.environ['PASSWORD']); c.auth_log_in(); assert c.app.version=='v5.2.4'"])
 
 def stop(name):
     run(["docker", "stop", "-t", "30", name], timeout=45)
