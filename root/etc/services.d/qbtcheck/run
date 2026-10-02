@@ -1,0 +1,6 @@
+#!/bin/execlineb -P
+
+# Move stderr to out so it's piped to logger
+fdmove -c 2 1
+
+/defaults/qbtcheck

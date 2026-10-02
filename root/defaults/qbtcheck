@@ -1,0 +1,137 @@
+#!/usr/bin/python3
+
+import os
+import sys
+import re
+import time
+import random
+import qbittorrentapi
+
+# Lock file for PID-based locking
+lockfile_path = "/tmp/script.lock"
+
+def acquire_lock(lockfile):
+    if os.path.exists(lockfile):
+        with open(lockfile, 'r') as f:
+            pid = f.read().strip()
+        if os.path.exists(f"/proc/{pid}"):
+            print(f"Script is already running with PID {pid}. Exiting.")
+            sys.exit(0)
+        else:
+            print("Stale lock file found. Overwriting with new PID.")
+    
+    with open(lockfile, 'w') as f:
+        f.write(str(os.getpid()))
+
+def release_lock(lockfile):
+    if os.path.exists(lockfile):
+        os.remove(lockfile)
+
+def is_private(url):
+    pattern1 = '(http|https|udp)://[a-z0-9\.-]+\.[a-z]{2,13}((:[0-9]{2,5})|)/.*an.*\?.+=.+'
+    pattern2 = '(http|https|udp)://[a-z0-9\.-]+\.[a-z]{2,13}((:[0-9]{2,5})|)/.*[0-9a-zA-Z]{8,32}/an.*'
+    result=True if re.match(pattern1, url) or re.match(pattern2, url) else False
+    return result
+
+def delete_torrent_by_hash(hash_to_delete):
+    """
+    Connects to qBittorrent and deletes the torrent with the provided SHA1 hash.
+    Errors are ignored if the torrent does not exist.
+    """
+    print(f"Deletion mode: Attempting to delete torrent with hash {hash_to_delete}")
+    qbt_client = qbittorrentapi.Client(
+        host='localhost:8080',
+        username='admin',
+        password=os.getenv('PASSWORD')
+    )
+    try:
+        qbt_client.auth_log_in()
+    except Exception as e:
+        print(f"Error logging into qBittorrent for deletion: {e}")
+        sys.exit(1)
+    try:
+        qbt_client.torrents.delete(torrent_hashes=hash_to_delete)
+        print(f"Torrent with hash {hash_to_delete} deleted, or did not exist.")
+    except Exception as e:
+        print(f"Error deleting torrent with hash {hash_to_delete}: {e}. Ignoring error.")
+    sys.exit(0)
+
+def main_loop():
+    qbt_client = qbittorrentapi.Client(host='localhost:8080', username='admin', password=os.getenv('PASSWORD'))
+
+    while True:
+        try:
+            qbt_client.auth_log_in()
+            break  # Successful login breaks the loop
+        except qbittorrentapi.exceptions.APIConnectionError as e:
+            error_message = str(e)
+            # Check if the error message is about connection refusal
+            if "Connection refused" in error_message:
+                print("Failed to connect to qBittorrent due to connection refusal. Retrying in 10 seconds...")
+                time.sleep(10)  # Wait for 10 seconds before retrying
+            else:
+                # For other APIConnectionErrors, sleep indefinitely
+                print(f"Failed to connect to qBittorrent. Unknown or unsupported error: {error_message}")
+                print("Sleeping indefinitely with minimal CPU usage...")
+                while True:
+                    time.sleep(3600)  # Sleep for 1 hour at a time, effectively indefinitely
+                return  # Unreachable code due to the infinite loop above
+        except Exception as e:
+            # Handle other unexpected exceptions
+            print(f"An unexpected error occurred, sleeping indefinitely: {e}")
+            while True:
+                time.sleep(3600)
+            return
+
+    print(f'qBittorrent: {qbt_client.app.version}')
+    print(f'qBittorrent Web API: {qbt_client.app.web_api_version}')
+
+    while True:
+        # Main logic of checking torrents and pausing them based on criteria
+        for torrent in qbt_client.torrents_info():
+            torrent_completed = bool(torrent.state_enum.is_complete)
+            torrent_active = bool(not torrent.state_enum.is_paused) and bool(not torrent.state_enum.is_checking) and bool(not torrent.state_enum.is_errored)
+
+            print(f'{torrent.hash[-6:]}: {torrent.name} active: ({torrent_active}) completed: ({torrent_completed})')
+
+            if not torrent_active:
+                print('Not active, continuing...')
+                continue
+            if not torrent_completed:
+                print('Not completed, continuing...')
+                continue
+            
+            tracker_list = qbt_client.torrents_trackers(torrent.hash)
+            is_public = True
+            for tracker in tracker_list:
+                if tracker.msg == 'This torrent is private':
+                    print('Private, continuing...')
+                    is_public = False
+                    break
+                if is_private(tracker.url):
+                    print('Private, continuing...')
+                    is_public = False
+                    break
+
+            if not is_public:
+                continue
+
+            print('Public! Pausing...')
+            qbt_client.torrents.pause(torrent_hashes=torrent.hash)
+
+        # Random delay between checks, outside the for loop but inside the while loop
+        jitter = random.randint(60, 120)
+        print(f"Delaying next execution by {jitter} seconds.")
+        time.sleep(jitter)
+
+if __name__ == "__main__":
+    # If a hash argument is provided, attempt deletion without acquiring the lock
+    if len(sys.argv) > 1:
+        delete_torrent_by_hash(sys.argv[1])
+    
+    # Proceed with standard operation: acquiring lock and entering main loop
+    acquire_lock(lockfile_path)
+    try:
+        main_loop()
+    finally:
+        release_lock(lockfile_path)

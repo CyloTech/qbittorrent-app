@@ -1,0 +1,52 @@
+FROM repo.cylo.net/docker-baseimage-ubuntu:jammy
+
+# environment settings
+ARG DEBIAN_FRONTEND="noninteractive"
+ENV HOME="/torrents/config/" \
+XDG_CONFIG_HOME="/torrents/config/" \
+XDG_DATA_HOME="/torrents/config/"
+
+# add repo and install qbitorrent
+RUN echo "***** add qbitorrent repositories ****" && \
+  apt-get update && \
+  apt-get install -y \
+    gnupg \
+    python3 && \
+  echo "**** install packages ****" && \
+  apt-get update && \
+  apt-get install -y \
+    p7zip-full \
+    qt6-base-dev \
+    openssl \
+    cron \
+    python3-pip \
+    python3-pkg-resources \
+    unrar \
+    geoip-bin \
+    unzip \
+    curl && \
+  pip3 install qbittorrent-api && \
+  echo "**** cleanup ****" && \
+  apt-get -y remove python3-pip && \
+  apt -y autoremove && \
+  apt-get clean && \
+  rm -rf \
+    /tmp/* \
+    /var/lib/apt/lists/* \
+    /var/tmp/*
+
+# Download VueTorrent
+RUN echo "**** download VueTorrent WebUI ****" && \
+  mkdir -p /vuetorrent && \
+  LATEST_RELEASE=$(curl -s https://api.github.com/repos/VueTorrent/VueTorrent/releases/latest | grep "tag_name" | cut -d '"' -f 4) && \
+  echo "Downloading VueTorrent ${LATEST_RELEASE}" && \
+  curl -L "https://github.com/VueTorrent/VueTorrent/releases/download/${LATEST_RELEASE}/vuetorrent.zip" -o /vuetorrent/vuetorrent.zip
+
+# add local files
+COPY root/ /
+
+RUN echo "**** install qbittorrent ****" && \
+  cp /qbittorrent-5.2.3/bin/x86_64-qbittorrent-nox-5.2.3-libtorrent-2 /usr/bin/qbittorrent-nox && \
+  chmod +x /usr/bin/qbittorrent-nox
+
+EXPOSE 8080

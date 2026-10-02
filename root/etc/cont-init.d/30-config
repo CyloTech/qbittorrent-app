@@ -1,0 +1,216 @@
+#!/usr/bin/with-contenv bash
+# shellcheck shell=bash
+
+rm -rf /tmp/*
+
+WEBUI_PORT=${WEBUI_PORT:-8080}
+QBITTORRENT_CONFIG=/torrents/config/qBittorrent/qBittorrent.conf
+QBITTORRENT_LOCKFILE=/torrents/config/qBittorrent/lockfile
+
+set_qbt_config_value() {
+  QBT_CONFIG="${QBITTORRENT_CONFIG}" QBT_SECTION="$1" QBT_PREF_KEY="$2" QBT_PREF_VALUE="$3" python3 - <<'PY'
+from pathlib import Path
+import os
+
+path = Path(os.environ["QBT_CONFIG"])
+section = os.environ["QBT_SECTION"]
+key = os.environ["QBT_PREF_KEY"]
+value = os.environ["QBT_PREF_VALUE"]
+
+lines = path.read_text().splitlines() if path.exists() else []
+section_header = f"[{section}]"
+
+try:
+    section_start = next(i for i, line in enumerate(lines) if line.strip() == section_header)
+except StopIteration:
+    if lines and lines[-1].strip():
+        lines.append("")
+    lines.append(section_header)
+    section_start = len(lines) - 1
+
+section_end = len(lines)
+for index in range(section_start + 1, len(lines)):
+    stripped = lines[index].strip()
+    if stripped.startswith("[") and stripped.endswith("]"):
+        section_end = index
+        break
+
+setting = f"{key}={value}"
+for index in range(section_start + 1, section_end):
+    if lines[index].startswith(f"{key}="):
+        lines[index] = setting
+        break
+else:
+    lines.insert(section_end, setting)
+
+path.write_text("\n".join(lines) + "\n")
+PY
+}
+
+set_qbt_preference() {
+  set_qbt_config_value "Preferences" "$1" "$2"
+}
+
+configure_qbt_ports() {
+  set_qbt_config_value "BitTorrent" "Session\\Port" "${LISTENING_PORT}"
+  set_qbt_preference "Connection\\PortRangeMin" "${LISTENING_PORT}"
+  set_qbt_preference "Advanced\\trackerPort" "${TRACKER_PORT}"
+}
+
+generate_webui_password_hash() {
+  python3 - <<'PY'
+import base64
+import hashlib
+import os
+
+password = os.environ.get("PASSWORD")
+if password is None:
+    raise SystemExit("PASSWORD is not set")
+
+salt = os.urandom(16)
+digest = hashlib.pbkdf2_hmac("sha512", password.encode("utf-8"), salt, 100000)
+salt_b64 = base64.b64encode(salt).decode("ascii")
+digest_b64 = base64.b64encode(digest).decode("ascii")
+print(f'"@ByteArray({salt_b64}:{digest_b64})"')
+PY
+}
+
+configure_webui_password() {
+  if [[ -z "${PASSWORD:-}" ]]; then
+    echo "PASSWORD is not set; qBittorrent will generate a temporary WebUI password"
+    return
+  fi
+
+  set_qbt_preference "WebUI\\Password_PBKDF2" "$(generate_webui_password_hash)"
+}
+
+configure_reverse_proxy_trust() {
+  local gateway_ip proxy_list
+
+  gateway_ip="$(python3 - <<'PY'
+import socket
+import struct
+
+with open("/proc/net/route", encoding="utf-8") as route_file:
+    next(route_file, None)
+    for line in route_file:
+        fields = line.split()
+        if len(fields) >= 3 and fields[1] == "00000000":
+            print(socket.inet_ntoa(struct.pack("<L", int(fields[2], 16))))
+            break
+PY
+)"
+
+  if [[ -z "${gateway_ip}" ]]; then
+    echo "Could not detect Docker gateway; leaving qBittorrent reverse proxy trust list unchanged"
+    return
+  fi
+
+  proxy_list="${gateway_ip}"
+  if [[ "${gateway_ip}" =~ ^[0-9]+(\.[0-9]+){3}$ ]]; then
+    proxy_list="${proxy_list};::ffff:${gateway_ip}"
+  fi
+
+  set_qbt_preference "WebUI\\ReverseProxySupportEnabled" "true"
+  set_qbt_preference "WebUI\\TrustedReverseProxiesList" "${proxy_list}"
+  chown abc:abc "${QBITTORRENT_CONFIG}"
+}
+
+remove_legacy_lockfile() {
+  if [[ -f "${QBITTORRENT_LOCKFILE}" && ! -s "${QBITTORRENT_LOCKFILE}" ]]; then
+    echo "Removing legacy qBittorrent lockfile from previous version"
+    rm -f "${QBITTORRENT_LOCKFILE}"
+  fi
+}
+
+declare -p | grep -Ev '^declare -[[:alpha:]]*r' > /container.env
+
+if [ ! -f /etc/app_configured ]; then
+  mkdir -p /torrents/downloading
+  mkdir -p /torrents/completed
+  mkdir -p /torrents/config/qBittorrent
+  mkdir -p /torrents/config/log
+  mkdir -p /torrents/config/torrents
+  mkdir -p /torrents/watch
+fi
+
+# chown download directory if currently not set to abc
+if [[ -d /torrents/downloading ]]; then
+  if [[ "$(stat -c '%U' /torrents/downloading)" != "abc" ]]; then
+    chown -R abc:abc /torrents/downloading
+  fi
+
+  if [[ "$(stat -c '%U' /torrents/completed)" != "abc" ]]; then
+    chown -R abc:abc /torrents/completed
+  fi
+
+    if [[ "$(stat -c '%U' /torrents/watch)" != "abc" ]]; then
+    chown -R abc:abc /torrents/watch
+  fi
+fi
+
+# permissions
+chown -R abc:abc \
+	/torrents/config
+
+remove_legacy_lockfile
+
+# configure qBittorrent
+if [[ ! -f /etc/app_configured ]]; then
+  if [ -f /torrents/config/qBittorrent/qBittorrent.conf ]; then
+    configure_qbt_ports
+  else
+    cp /defaults/qBittorrent.conf /torrents/config/qBittorrent/qBittorrent.conf
+    configure_qbt_ports
+  fi
+
+  # Install VueTorrent if enabled
+  if [[ "${ENABLE_VUETORRENT}" == "1" ]]; then
+    echo "Installing VueTorrent WebUI"
+    mkdir -p /torrents/config/qBittorrent/vuetorrent
+    
+    # Use the pre-downloaded VueTorrent archive
+    echo "Extracting pre-downloaded VueTorrent from /vuetorrent/vuetorrent.zip"
+    unzip -o /vuetorrent/vuetorrent.zip -d /torrents/config/qBittorrent/
+    
+    # Properly update qBittorrent config for WebUI settings
+    # Make sure these settings are in the [Preferences] section
+    if grep -q "\\[Preferences\\]" /torrents/config/qBittorrent/qBittorrent.conf; then
+      # Check if WebUI\AlternativeUIEnabled exists
+      if grep -q "WebUI\\\\AlternativeUIEnabled" /torrents/config/qBittorrent/qBittorrent.conf; then
+        sed -i 's|WebUI\\AlternativeUIEnabled=.*|WebUI\\AlternativeUIEnabled=true|g' /torrents/config/qBittorrent/qBittorrent.conf
+      else
+        # Insert new line after [Preferences] section
+        sed -i '/\[Preferences\]/a WebUI\\AlternativeUIEnabled=true' /torrents/config/qBittorrent/qBittorrent.conf
+      fi
+      
+      # Check if WebUI\RootFolder exists
+      if grep -q "WebUI\\\\RootFolder" /torrents/config/qBittorrent/qBittorrent.conf; then
+        sed -i 's|WebUI\\RootFolder=.*|WebUI\\RootFolder=/torrents/config/qBittorrent/vuetorrent|g' /torrents/config/qBittorrent/qBittorrent.conf
+      else
+        # Insert new line after [Preferences] section
+        sed -i '/\[Preferences\]/a WebUI\\RootFolder=/torrents/config/qBittorrent/vuetorrent' /torrents/config/qBittorrent/qBittorrent.conf
+      fi
+    else
+      # If [Preferences] section doesn't exist, create it
+      echo "" >> /torrents/config/qBittorrent/qBittorrent.conf
+      echo "[Preferences]" >> /torrents/config/qBittorrent/qBittorrent.conf
+      echo "WebUI\\AlternativeUIEnabled=true" >> /torrents/config/qBittorrent/qBittorrent.conf
+      echo "WebUI\\RootFolder=/torrents/config/qBittorrent/vuetorrent" >> /torrents/config/qBittorrent/qBittorrent.conf
+    fi
+    
+    # Set proper permissions
+    chown -R abc:abc /torrents/config/qBittorrent/vuetorrent
+    
+    echo "VueTorrent WebUI has been installed"
+  fi
+
+  touch /etc/app_configured
+  until [[ $(curl -i -H "Accept: application/json" -H "Content-Type:application/json" -X POST "https://api.cylo.io/v1/apps/installed/${INSTANCE_ID}" | grep '200') ]]
+  do
+      sleep 5
+  done
+fi
+
+configure_webui_password
+configure_reverse_proxy_trust
