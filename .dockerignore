@@ -1,0 +1,9 @@
+**
+!Dockerfile
+!root/
+!root/defaults/
+!root/defaults/qBittorrent.conf
+!root/defaults/watched_folders.json
+!root/defaults/qbtcheck
+!root/etc/
+!root/etc/**

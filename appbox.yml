@@ -1,0 +1,29 @@
+app:
+  display_name: qBittorrent
+  publisher: qBittorrent
+  description: BitTorrent client with a web interface.
+image:
+  name: repo.cylo.net/qbittorrent
+  version: 5.2.4_2.0.15.0
+  tag: 5.2.4_2.0.15.0
+container:
+  memory: 100
+  memory_swap: 100
+  memory_reservation: 4
+  cpus: 0
+  init: false
+networking:
+  is_web_app: true
+  requires_domain: true
+  subdomain: qbittorrent
+  ssl: true
+behavior:
+  app_slots: 1
+  expect_callback: true
+  callback_requires_auth: false
+  can_update: true
+  allow_downgrade: true
+  ssl_restart: false
+ports:
+  combined:
+    dynamic: 2
