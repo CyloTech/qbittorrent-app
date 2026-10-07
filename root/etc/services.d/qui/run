@@ -1,0 +1,7 @@
+#!/usr/bin/with-contenv bash
+set -e
+if [[ "${ENABLE_VUETORRENT:-0}" != "qui" ]]; then
+  exec s6-pause
+fi
+s6-setuidgid abc /defaults/appbox-qui.py &
+exec s6-setuidgid abc /usr/local/bin/qui serve --config-dir /torrents/config/qui

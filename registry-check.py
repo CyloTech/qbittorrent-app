@@ -3,8 +3,8 @@
 import subprocess
 import sys
 
-EXPECTED = "repo.cylo.net/qbittorrent:5.2.4_2.0.15.0"
-BASELINE = "repo.cylo.net/qbittorrent:5.2.3_2.0.13.0"
+EXPECTED = "repo.cylo.net/qbittorrent:5.2.4_2.0.15.0-1"
+BASELINE = "repo.cylo.net/qbittorrent:5.2.4_2.0.15.0"
 
 def inspect(image):
     return subprocess.run(["docker", "manifest", "inspect", image],

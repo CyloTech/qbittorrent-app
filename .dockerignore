@@ -7,3 +7,5 @@
 !root/defaults/qbtcheck
 !root/etc/
 !root/etc/**
+!root/defaults/appbox-qui.py
+!root/defaults/qui-nginx.conf

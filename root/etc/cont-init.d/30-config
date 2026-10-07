@@ -4,6 +4,10 @@
 rm -rf /tmp/*
 
 WEBUI_PORT=${WEBUI_PORT:-8080}
+case "${ENABLE_VUETORRENT:-0}" in
+  0|1|qui) ;;
+  *) echo "Invalid web interface selection"; exit 1 ;;
+esac
 QBITTORRENT_CONFIG=/torrents/config/qBittorrent/qBittorrent.conf
 QBITTORRENT_LOCKFILE=/torrents/config/qBittorrent/lockfile
 
@@ -107,6 +111,9 @@ PY
   fi
 
   proxy_list="${gateway_ip}"
+  if [[ "${ENABLE_VUETORRENT:-0}" == "qui" ]]; then
+    proxy_list="${proxy_list};127.0.0.1"
+  fi
   if [[ "${gateway_ip}" =~ ^[0-9]+(\.[0-9]+){3}$ ]]; then
     proxy_list="${proxy_list};::ffff:${gateway_ip}"
   fi
@@ -164,52 +171,26 @@ if [[ ! -f /etc/app_configured ]]; then
     configure_qbt_ports
   fi
 
-  # Install VueTorrent if enabled
-  if [[ "${ENABLE_VUETORRENT}" == "1" ]]; then
+  if [[ "${ENABLE_VUETORRENT:-0}" == "1" ]]; then
     echo "Installing VueTorrent WebUI"
-    mkdir -p /torrents/config/qBittorrent/vuetorrent
-    
-    # Use the pre-downloaded VueTorrent archive
-    echo "Extracting pre-downloaded VueTorrent from /vuetorrent/vuetorrent.zip"
     unzip -o /vuetorrent/vuetorrent.zip -d /torrents/config/qBittorrent/
-    
-    # Properly update qBittorrent config for WebUI settings
-    # Make sure these settings are in the [Preferences] section
-    if grep -q "\\[Preferences\\]" /torrents/config/qBittorrent/qBittorrent.conf; then
-      # Check if WebUI\AlternativeUIEnabled exists
-      if grep -q "WebUI\\\\AlternativeUIEnabled" /torrents/config/qBittorrent/qBittorrent.conf; then
-        sed -i 's|WebUI\\AlternativeUIEnabled=.*|WebUI\\AlternativeUIEnabled=true|g' /torrents/config/qBittorrent/qBittorrent.conf
-      else
-        # Insert new line after [Preferences] section
-        sed -i '/\[Preferences\]/a WebUI\\AlternativeUIEnabled=true' /torrents/config/qBittorrent/qBittorrent.conf
-      fi
-      
-      # Check if WebUI\RootFolder exists
-      if grep -q "WebUI\\\\RootFolder" /torrents/config/qBittorrent/qBittorrent.conf; then
-        sed -i 's|WebUI\\RootFolder=.*|WebUI\\RootFolder=/torrents/config/qBittorrent/vuetorrent|g' /torrents/config/qBittorrent/qBittorrent.conf
-      else
-        # Insert new line after [Preferences] section
-        sed -i '/\[Preferences\]/a WebUI\\RootFolder=/torrents/config/qBittorrent/vuetorrent' /torrents/config/qBittorrent/qBittorrent.conf
-      fi
-    else
-      # If [Preferences] section doesn't exist, create it
-      echo "" >> /torrents/config/qBittorrent/qBittorrent.conf
-      echo "[Preferences]" >> /torrents/config/qBittorrent/qBittorrent.conf
-      echo "WebUI\\AlternativeUIEnabled=true" >> /torrents/config/qBittorrent/qBittorrent.conf
-      echo "WebUI\\RootFolder=/torrents/config/qBittorrent/vuetorrent" >> /torrents/config/qBittorrent/qBittorrent.conf
-    fi
-    
-    # Set proper permissions
     chown -R abc:abc /torrents/config/qBittorrent/vuetorrent
-    
-    echo "VueTorrent WebUI has been installed"
+    set_qbt_preference "WebUI\\AlternativeUIEnabled" "true"
+    set_qbt_preference "WebUI\\RootFolder" "/torrents/config/qBittorrent/vuetorrent"
+  else
+    set_qbt_preference "WebUI\\AlternativeUIEnabled" "false"
   fi
 
   touch /etc/app_configured
-  until [[ $(curl -i -H "Accept: application/json" -H "Content-Type:application/json" -X POST "https://api.cylo.io/v1/apps/installed/${INSTANCE_ID}" | grep '200') ]]
-  do
-      sleep 5
-  done
+  if [[ "${ENABLE_VUETORRENT:-0}" == "qui" ]]; then
+    mkdir -p /run/qui-proxy
+    touch /run/qui-proxy/callback-pending
+  else
+    until [[ $(curl -i -H "Accept: application/json" -H "Content-Type:application/json" -X POST "https://api.cylo.io/v1/apps/installed/${INSTANCE_ID}" | grep '200') ]]
+    do
+        sleep 5
+    done
+  fi
 fi
 
 configure_webui_password

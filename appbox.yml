@@ -4,9 +4,8 @@ app:
   description: BitTorrent client with a web interface.
 image:
   name: repo.cylo.net/qbittorrent
-  version: 5.2.4_2.0.15.0
-  tag: 5.2.4_2.0.15.0
-  digest: repo.cylo.net/qbittorrent@sha256:bfb8197efda742ec58d88543c75885c18aadc32143442564d3595bcf9a6a7ffd
+  version: 5.2.4_2.0.15.0-1
+  tag: 5.2.4_2.0.15.0-1
 container:
   memory: 100
   memory_swap: 100
@@ -28,3 +27,15 @@ behavior:
 ports:
   combined:
     dynamic: 2
+custom_fields:
+  ENABLE_VUETORRENT:
+    label: Web interface
+    type: selector
+    required: false
+    default_value: '0'
+    description: Choose qBittorrent, VueTorrent or qui. qui starts with your Appbox login.
+    params:
+      menuItems:
+        '0': qBittorrent
+        '1': VueTorrent
+        qui: qui

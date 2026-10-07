@@ -1,0 +1,7 @@
+#!/usr/bin/with-contenv bash
+set -e
+if [[ "${ENABLE_VUETORRENT:-0}" != "qui" ]]; then
+  exec s6-pause
+fi
+until [[ -f /run/qui-proxy/ready ]]; do sleep 1; done
+exec s6-setuidgid abc nginx -c /defaults/qui-nginx.conf -g 'daemon off;'
