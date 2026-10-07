@@ -201,7 +201,7 @@ if run(["docker", "image", "inspect", "--format", "{{.Os}}/{{.Architecture}}", I
 if run(["docker", "run", "--rm", "--platform", "linux/amd64", "--entrypoint", "/usr/bin/qbittorrent-nox", IMAGE, "--version"]) != "qBittorrent v5.2.4":
     raise RuntimeError("Wrong binary version")
 
-for interface in ("0", "1", "qui"):
+for interface in ("qui", "0", "1"):
     fresh_volume = volume("fresh-data-" + interface)
     fresh = start("fresh-" + interface, IMAGE, fresh_volume, "v5.2.4", interface)
     verify(fresh)
