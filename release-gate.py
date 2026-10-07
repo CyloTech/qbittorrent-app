@@ -182,6 +182,11 @@ print('qui authentication, automatic qBittorrent connection and persistence veri
     if "1.30.0" not in run(["docker", "exec", name, "/usr/local/bin/qui", "--version"]):
         raise RuntimeError("Unexpected qui version")
 
+# Both root init and the UID 1000 qui helper use the synthetic callback sink.
+callback_log = Path(stage.name, "callback.log")
+callback_log.touch()
+callback_log.chmod(0o666)
+
 mock = Path(stage.name) / "curl"
 mock.write_text('#!/bin/bash\nfor arg in "$@"; do\n'
                 ' if [[ "$arg" == "https://api.cylo.io/v1/apps/installed/41416-release-gate" ]]; then\n'
