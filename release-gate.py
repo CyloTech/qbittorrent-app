@@ -63,7 +63,10 @@ def ready(name, version):
             if api(name, "app/version") == version:
                 return
         except RuntimeError:
-            pass
+            diagnostics = subprocess.run(["docker", "logs", "--tail", "40", name], capture_output=True, text=True)
+            logs = diagnostics.stdout + diagnostics.stderr
+            if "qui initialization failed" in logs:
+                raise RuntimeError("qui initialization failed; see redacted logs: " + logs[-2000:].replace(PASSWORD, "[REDACTED]"))
         time.sleep(2)
     raise RuntimeError("qBittorrent readiness timed out")
 
@@ -194,7 +197,8 @@ if run(["docker", "run", "--rm", "--platform", "linux/amd64", "--entrypoint", "/
     raise RuntimeError("Wrong binary version")
 
 for interface in ("0", "1", "qui"):
-    fresh = start("fresh-" + interface, IMAGE, volume("fresh-data-" + interface), "v5.2.4", interface)
+    fresh_volume = volume("fresh-data-" + interface)
+    fresh = start("fresh-" + interface, IMAGE, fresh_volume, "v5.2.4", interface)
     verify(fresh)
     expected_vue = interface == "1"
     if json.loads(api(fresh, "app/preferences"))["alternative_webui_enabled"] != expected_vue:
@@ -212,6 +216,16 @@ for interface in ("0", "1", "qui"):
             raise RuntimeError("Restart replaced qui state")
     if callback_lines() != callback_count:
         raise RuntimeError("Restart repeated the install callback")
+    if interface == "qui":
+        stop(fresh)
+        PASSWORD = "ChangedA1! " + secrets.token_urlsafe(24) + " ' \" $"
+        fresh = start("changed-password", IMAGE, fresh_volume, "v5.2.4", "qui")
+        verify(fresh)
+        verify_qui(fresh, renamed=True)
+        changed_state = run(["docker", "exec", fresh, "sha256sum", "/torrents/config/qui/.appbox-state.json"]).split()[0]
+        if changed_state == original_state:
+            raise RuntimeError("App password change did not update qui state")
+        print("PASS: app password change synchronized qui and its qBittorrent connection", flush=True)
     stop(fresh)
     print("PASS: fresh " + interface + ", restart, authentication, UID 1000, callback", flush=True)
 

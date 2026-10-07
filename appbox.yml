@@ -33,7 +33,7 @@ custom_fields:
     type: selector
     required: false
     default_value: '0'
-    description: Choose qBittorrent, VueTorrent or qui. qui starts with your Appbox login.
+    description: Choose qBittorrent, VueTorrent or qui. qui uses this app's username and password.
     params:
       menuItems:
         '0': qBittorrent
