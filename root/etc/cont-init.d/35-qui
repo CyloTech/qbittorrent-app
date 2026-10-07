@@ -4,5 +4,6 @@ if [[ "${ENABLE_VUETORRENT:-0}" == "qui" ]]; then
   [[ -n "${PASSWORD:-}" ]] || { echo "A password is required for qui"; exit 1; }
   mkdir -p /torrents/config/qui /run/qui-proxy
   chown -R abc:abc /torrents/config/qui /run/qui-proxy
+  rm -f /run/qui-proxy/ready
   chmod 700 /torrents/config/qui /run/qui-proxy
 fi

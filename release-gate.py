@@ -157,8 +157,13 @@ if os.environ.get('QUI_GATE_RENAME')=='1':
     req('/api/instances/'+str(instance['id'])+'/',{'name':'Preserved qui name','host':instance['host'],'username':'admin','password':os.environ['PASSWORD']},'PUT')
 if os.environ.get('QUI_GATE_RENAMED')=='1':
     assert instance['name']=='Preserved qui name'
-result=req('/api/instances/'+str(instance['id'])+'/test',{},'POST')
-assert result['connected'] is True
+for _ in range(45):
+    result=req('/api/instances/'+str(instance['id'])+'/test',{},'POST')
+    if result['connected'] is True:
+        break
+    time.sleep(2)
+else:
+    raise AssertionError('qui connection did not recover: ' + result.get('error','unknown').replace(os.environ['PASSWORD'],'[REDACTED]'))
 if os.environ.get('QUI_GATE_HASH'):
     for _ in range(30):
         response=req('/api/instances/'+str(instance['id'])+'/torrents')
@@ -172,7 +177,7 @@ print('qui authentication, automatic qBittorrent connection and persistence veri
     env = ["-e", "QUI_GATE_RENAME=" + ("1" if rename else "0"),
            "-e", "QUI_GATE_RENAMED=" + ("1" if renamed else "0"),
            "-e", "QUI_GATE_HASH=" + (torrent_hash or "")]
-    run(["docker", "exec", "-i"] + env + [name, "python3", "-"], data=script, timeout=80)
+    run(["docker", "exec", "-i"] + env + [name, "python3", "-"], data=script, timeout=200)
     for process in ("qui", "nginx"):
         uids = run(["docker", "exec", name, "ps", "-C", process, "-o", "uid="]).split()
         if not uids or set(uids) != {"1000"}:

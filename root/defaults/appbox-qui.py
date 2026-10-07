@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sqlite3
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -55,18 +56,28 @@ def request(base, path, data=None, *, method=None, form=False):
         return payload.decode()
 
 
-def wait_for_services():
+def wait_for_qbt():
     for _ in range(150):
         try:
             request(QBT, '/api/v2/auth/login',
                     {'username': 'admin', 'password': PASSWORD}, form=True)
             if request(QBT, '/api/v2/app/version') != 'v5.2.4':
                 raise RuntimeError('Unexpected qBittorrent version')
+            return
+        except (OSError, urllib.error.URLError):
+            time.sleep(2)
+    raise RuntimeError('qBittorrent did not become ready')
+
+
+def wait_for_services():
+    wait_for_qbt()
+    for _ in range(150):
+        try:
             request(QUI, '/api/auth/check-setup')
             return
         except (OSError, urllib.error.URLError):
             time.sleep(2)
-    raise RuntimeError('Local services did not become ready')
+    raise RuntimeError('qui did not become ready')
 
 
 def reset_qui_password():
@@ -160,7 +171,12 @@ def main():
 
 if __name__ == '__main__':
     try:
-        main()
+        if sys.argv[1:] == ['--wait-qbt']:
+            wait_for_qbt()
+        elif len(sys.argv) == 1:
+            main()
+        else:
+            raise RuntimeError('Unexpected arguments')
     except Exception as error:
         # HTTP errors can contain credentials; retain only the error type/status.
         code = getattr(error, 'code', None)
