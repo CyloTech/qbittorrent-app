@@ -122,8 +122,14 @@ def configure():
         instance = request(QUI, f"/api/instances/{local[0]['id']}/", body, method='PUT')
     else:
         instance = request(QUI, '/api/instances/', body)
-    result = request(QUI, f"/api/instances/{instance['id']}/test", {}, method='POST')
-    if result.get('connected') is not True:
+    # qui briefly backs off after attempting its old saved credentials during
+    # an Appbox password change. Wait for the updated connection to recover.
+    for _ in range(60):
+        result = request(QUI, f"/api/instances/{instance['id']}/test", {}, method='POST')
+        if result.get('connected') is True:
+            break
+        time.sleep(2)
+    else:
         raise RuntimeError('qui could not connect to qBittorrent')
     state = {'instance_id': instance['id'], 'password_hash': HASHER.hash(PASSWORD)}
     temporary = STATE.with_suffix('.tmp')
