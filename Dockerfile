@@ -2,7 +2,6 @@ FROM repo.cylo.net/qbittorrent@sha256:bfb8197efda742ec58d88543c75885c18aadc32143
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends nginx-light python3-argon2 && \
-    chown -R abc:abc /var/log/nginx && \
     rm -rf /var/lib/apt/lists/* && \
     curl -fL --retry 3 \
       https://github.com/autobrr/qui/releases/download/v1.30.0/qui_1.30.0_linux_x86_64.tar.gz \
