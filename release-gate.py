@@ -12,8 +12,8 @@ import tempfile
 import time
 import urllib.parse
 
-IMAGE = "repo.cylo.net/qbittorrent:5.2.4_2.0.15.0-2"
-OLD = "repo.cylo.net/qbittorrent@sha256:bfb8197efda742ec58d88543c75885c18aadc32143442564d3595bcf9a6a7ffd"
+IMAGE = "repo.cylo.net/qbittorrent:5.2.4_2.0.15.0-3"
+OLD = "repo.cylo.net/qbittorrent@sha256:7df0fd9b6ada07bb5cb82cfd00b5dee489eaf323c4014eb32cc1e6c5532c0a6a"
 if len(sys.argv) != 2 or sys.argv[1] != IMAGE:
     raise SystemExit("Unexpected image reference")
 PASSWORD = "GateA1! " + secrets.token_urlsafe(24) + " ' \" $"
@@ -137,6 +137,14 @@ done
     if interface == "qui" and ("127.0.0.1" not in proxies or preferences["bypass_local_auth"]):
         raise RuntimeError("qui proxy does not require qBittorrent authentication")
 
+def disk_io(name):
+    """Return the saved DiskIOType line and the WebAPI disk_io_type value."""
+    line = run(["docker", "exec", name, "sh", "-c",
+                r"grep -E '^Session\\DiskIOType=' /torrents/config/qBittorrent/qBittorrent.conf || true"])
+    return line, json.loads(api(name, "app/preferences"))["disk_io_type"]
+
+POSIX = (r"Session\DiskIOType=Posix", 2)
+
 def callback_lines():
     path = Path(stage.name, "callback.log")
     return len(path.read_text().splitlines()) if path.exists() else 0
@@ -236,6 +244,8 @@ for interface in ("qui", "0", "1"):
     fresh = start("fresh-" + interface, IMAGE, fresh_volume, "v5.2.4", interface)
     verify(fresh)
     verify_auth_boundary(fresh, interface)
+    if disk_io(fresh) != POSIX:
+        raise RuntimeError("Fresh install did not default to POSIX disk I/O")
     expected_vue = interface == "1"
     if json.loads(api(fresh, "app/preferences"))["alternative_webui_enabled"] != expected_vue:
         raise RuntimeError("Web interface selection did not match")
@@ -251,6 +261,12 @@ for interface in ("qui", "0", "1"):
         restarted_state = run(["docker", "exec", fresh, "sha256sum", "/torrents/config/qui/.appbox-state.json"]).split()[0]
         if original_state != restarted_state:
             raise RuntimeError("Restart replaced qui state")
+    if interface == "1":
+        api(fresh, "app/setPreferences", 'json={"disk_io_type":1}')
+        run(["docker", "restart", "-t", "30", fresh], timeout=45)
+        ready(fresh, "v5.2.4")
+        if disk_io(fresh) != (r"Session\DiskIOType=MMap", 1):
+            raise RuntimeError("Restart replaced the chosen disk I/O type")
     if callback_lines() != callback_count:
         raise RuntimeError("Restart repeated the install callback")
     if interface == "qui":
@@ -287,6 +303,8 @@ for _ in range(30):
 else:
     raise RuntimeError("Synthetic torrent was not added")
 run(["docker", "exec", "--user", "1000:1000", baseline, "touch", "/torrents/completed/release-gate-preserved"])
+if disk_io(baseline)[0]:
+    raise RuntimeError("Baseline already sets a disk I/O type")
 stop(baseline)
 upgrade = start("upgrade", IMAGE, upgrade_vol, "v5.2.4", "qui")
 verify(upgrade)
@@ -296,14 +314,28 @@ if json.loads(api(upgrade, "app/preferences"))["max_active_downloads"] != 17:
 if not any(t["hash"] == info_hash for t in json.loads(api(upgrade, "torrents/info"))):
     raise RuntimeError("Upgrade lost the existing torrent")
 run(["docker", "exec", upgrade, "test", "-f", "/torrents/completed/release-gate-preserved"])
+if disk_io(upgrade) != POSIX:
+    raise RuntimeError("Upgrade did not switch to POSIX disk I/O")
+# Recheck reads the payload through the POSIX disk I/O backend.
+Path(stage.name, "release-gate-marker.txt").write_bytes(payload)
+run(["docker", "exec", "--user", "1000:1000", upgrade, "cp", "/release-gate/release-gate-marker.txt", "/torrents/completed/"])
+api(upgrade, "torrents/recheck", "hashes=" + info_hash)
+for _ in range(60):
+    if any(t["hash"] == info_hash and t["progress"] == 1 for t in json.loads(api(upgrade, "torrents/info"))):
+        break
+    time.sleep(1)
+else:
+    raise RuntimeError("Recheck did not verify the synthetic payload")
 verify_qui(upgrade, torrent_hash=info_hash)
 stop(upgrade)
 rollback = start("rollback", OLD, upgrade_vol, "v5.2.4")
 verify(rollback)
+if disk_io(rollback) != POSIX:
+    raise RuntimeError("Downgrade lost the disk I/O type")
 if not any(t["hash"] == info_hash for t in json.loads(api(rollback, "torrents/info"))):
     raise RuntimeError("Downgrade lost the existing torrent")
 run(["docker", "exec", rollback, "test", "-f", "/torrents/config/qui/qui.db"])
 stop(rollback)
-print("PASS: upgrade from 5.2.4 to qui, torrent/preferences/files preserved, downgrade preserved state", flush=True)
+print("PASS: upgrade from 5.2.4_2.0.15.0-2 to qui, torrent/preferences/files preserved, POSIX disk I/O, downgrade preserved state", flush=True)
 run([sys.executable, str(Path(__file__).with_name("registry-check.py")), IMAGE])
 print("PASS: registry precondition; image is ready to publish", flush=True)

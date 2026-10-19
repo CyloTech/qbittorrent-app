@@ -11,8 +11,10 @@ esac
 QBITTORRENT_CONFIG=/torrents/config/qBittorrent/qBittorrent.conf
 QBITTORRENT_LOCKFILE=/torrents/config/qBittorrent/lockfile
 
+# An optional fourth argument of "keep-existing" leaves a key that is already set.
 set_qbt_config_value() {
-  QBT_CONFIG="${QBITTORRENT_CONFIG}" QBT_SECTION="$1" QBT_PREF_KEY="$2" QBT_PREF_VALUE="$3" python3 - <<'PY'
+  QBT_CONFIG="${QBITTORRENT_CONFIG}" QBT_SECTION="$1" QBT_PREF_KEY="$2" QBT_PREF_VALUE="$3" \
+    QBT_KEEP_EXISTING="${4:-}" python3 - <<'PY'
 from pathlib import Path
 import os
 
@@ -20,6 +22,7 @@ path = Path(os.environ["QBT_CONFIG"])
 section = os.environ["QBT_SECTION"]
 key = os.environ["QBT_PREF_KEY"]
 value = os.environ["QBT_PREF_VALUE"]
+keep_existing = os.environ["QBT_KEEP_EXISTING"] == "keep-existing"
 
 lines = path.read_text().splitlines() if path.exists() else []
 section_header = f"[{section}]"
@@ -42,6 +45,8 @@ for index in range(section_start + 1, len(lines)):
 setting = f"{key}={value}"
 for index in range(section_start + 1, section_end):
     if lines[index].startswith(f"{key}="):
+        if keep_existing:
+            raise SystemExit(0)
         lines[index] = setting
         break
 else:
@@ -198,6 +203,11 @@ if [[ ! -f /etc/app_configured ]]; then
     done
   fi
 fi
+
+# libtorrent 2 memory-maps torrent data by default. On a shared host its page
+# faults trigger large readahead allocations that evict other Cylos' page
+# cache. Use POSIX reads and writes unless a disk I/O type is already chosen.
+set_qbt_config_value "BitTorrent" "Session\\DiskIOType" "Posix" keep-existing
 
 configure_webui_password
 configure_reverse_proxy_trust
