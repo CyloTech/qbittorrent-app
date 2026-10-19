@@ -192,10 +192,9 @@ if [[ ! -f /etc/app_configured ]]; then
     mkdir -p /run/qui-proxy
     touch /run/qui-proxy/callback-pending
   else
-    until [[ $(curl -i -H "Accept: application/json" -H "Content-Type:application/json" -X POST "https://api.cylo.io/v1/apps/installed/${INSTANCE_ID}" | grep '200') ]]
-    do
-        sleep 5
-    done
+    # The appbox-callback service sends it after cont-init, so a slow or
+    # rejected callback cannot keep qBittorrent from starting.
+    touch /etc/appbox_callback_pending
   fi
 fi
 
