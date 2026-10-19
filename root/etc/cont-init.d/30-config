@@ -187,7 +187,8 @@ if [[ ! -f /etc/app_configured ]]; then
     set_qbt_preference "WebUI\\AlternativeUIEnabled" "false"
   fi
 
-  touch /etc/app_configured
+  # Mark the callback pending before /etc/app_configured, so a container that
+  # stops between the two still sends it on its next start.
   if [[ "${ENABLE_VUETORRENT:-0}" == "qui" ]]; then
     mkdir -p /run/qui-proxy
     touch /run/qui-proxy/callback-pending
@@ -196,6 +197,7 @@ if [[ ! -f /etc/app_configured ]]; then
     # rejected callback cannot keep qBittorrent from starting.
     touch /etc/appbox_callback_pending
   fi
+  touch /etc/app_configured
 fi
 
 configure_webui_password
