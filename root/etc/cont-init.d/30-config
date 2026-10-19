@@ -119,7 +119,13 @@ PY
   fi
 
   set_qbt_preference "WebUI\\ReverseProxySupportEnabled" "true"
-  set_qbt_preference "WebUI\\TrustedReverseProxiesList" "${proxy_list}"
+  # Qt reads an unquoted ';' as the start of a comment, which drops every
+  # proxy after the first. Quote the list as qBittorrent itself writes it.
+  set_qbt_preference "WebUI\\TrustedReverseProxiesList" "\"${proxy_list}\""
+  if [[ "${ENABLE_VUETORRENT:-0}" == "qui" ]]; then
+    # Public API requests reach qBittorrent from the bundled loopback proxy.
+    set_qbt_preference "WebUI\\LocalHostAuth" "true"
+  fi
   chown abc:abc "${QBITTORRENT_CONFIG}"
 }
 

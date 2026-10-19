@@ -12,12 +12,14 @@ import tempfile
 import time
 import urllib.parse
 
-IMAGE = "repo.cylo.net/qbittorrent:5.2.4_2.0.15.0-1"
+IMAGE = "repo.cylo.net/qbittorrent:5.2.4_2.0.15.0-2"
 OLD = "repo.cylo.net/qbittorrent@sha256:bfb8197efda742ec58d88543c75885c18aadc32143442564d3595bcf9a6a7ffd"
 if len(sys.argv) != 2 or sys.argv[1] != IMAGE:
     raise SystemExit("Unexpected image reference")
 PASSWORD = "GateA1! " + secrets.token_urlsafe(24) + " ' \" $"
 callback_count = 0
+# Appbox appends the per-install callback token to INSTANCE_ID.
+INSTANCE_ID = "41416?callback_token=" + secrets.token_hex(32)
 prefix = "qbittorrent-gate-" + secrets.token_hex(6)
 containers, volumes = [], []
 stage = tempfile.TemporaryDirectory(prefix=prefix + "-")
@@ -75,9 +77,11 @@ def start(label, image, vol, version, interface="0"):
     name = prefix + "-" + label
     containers.append(name)
     run(["docker", "run", "-d", "--platform", "linux/amd64", "--name", name,
-         "--label", f"appbox.release-gate={prefix}", "-v", vol + ":/torrents",
+         # Appbox bind-mounts an empty directory; do not copy the image's /torrents.
+         "--label", f"appbox.release-gate={prefix}",
+         "--mount", f"type=volume,source={vol},target=/torrents,volume-nocopy",
          "-v", stage.name + "/curl:/usr/local/bin/curl:ro", "-v", stage.name + ":/release-gate",
-         "-e", "INSTANCE_ID=41416-release-gate", "-e", "PUID=1000", "-e", "PGID=1000",
+         "-e", "INSTANCE_ID=" + INSTANCE_ID, "-e", "PUID=1000", "-e", "PGID=1000",
          "-e", "LISTENING_PORT=6881", "-e", "TRACKER_PORT=9000", "-e", "WEBUI_PORT=8080",
          "-e", "ENABLE_VUETORRENT=" + interface, "-e", "PASSWORD=" + PASSWORD,
          image], timeout=180)
@@ -111,6 +115,27 @@ def verify(name):
     run(["docker", "exec", name, "/usr/bin/curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8080/"])
     run(["docker", "exec", name, "python3", "-c",
          "import os,qbittorrentapi; c=qbittorrentapi.Client(host='localhost:8080',username='admin',password=os.environ['PASSWORD']); c.auth_log_in(); assert c.app.version=='v5.2.4'"])
+
+def verify_auth_boundary(name, interface):
+    """Reject unauthenticated API access through every public request path."""
+    script = r"""
+ip=$(hostname -i | cut -d' ' -f1)
+paths="http://$ip:8080"
+[ "$1" = qui ] && paths="$paths http://127.0.0.1:8080"
+for base in $paths; do
+  for xff in '' 127.0.0.1 8.8.8.8; do
+    code=$(/usr/bin/curl -s -o /dev/null -w '%{http_code}' --max-time 10 ${xff:+-H "X-Forwarded-For: $xff"} "$base/api/v2/app/preferences")
+    [ "$code" = 403 ] || { echo "Anonymous API access via $base xff=${xff:-none}: $code"; exit 1; }
+  done
+done
+"""
+    run(["docker", "exec", "-i", name, "bash", "-s", "--", interface], data=script)
+    preferences = json.loads(api(name, "app/preferences"))
+    proxies = preferences["web_ui_reverse_proxies_list"].split(";")
+    if len(proxies) < 2:
+        raise RuntimeError("Trusted reverse proxy list was truncated: " + ";".join(proxies))
+    if interface == "qui" and ("127.0.0.1" not in proxies or preferences["bypass_local_auth"]):
+        raise RuntimeError("qui proxy does not require qBittorrent authentication")
 
 def callback_lines():
     path = Path(stage.name, "callback.log")
@@ -194,7 +219,7 @@ callback_log.chmod(0o666)
 
 mock = Path(stage.name) / "curl"
 mock.write_text('#!/bin/bash\nfor arg in "$@"; do\n'
-                ' if [[ "$arg" == "https://api.cylo.io/v1/apps/installed/41416-release-gate" ]]; then\n'
+                ' if [[ "$arg" == "https://api.cylo.io/v1/apps/installed/' + INSTANCE_ID + '" ]]; then\n'
                 '  printf "callback\\n" >> /release-gate/callback.log\n'
                 '  printf "HTTP/1.1 200 OK\\r\\n\\r\\n"\n'
                 '  exit 0\n fi\n'
@@ -210,6 +235,7 @@ for interface in ("qui", "0", "1"):
     fresh_volume = volume("fresh-data-" + interface)
     fresh = start("fresh-" + interface, IMAGE, fresh_volume, "v5.2.4", interface)
     verify(fresh)
+    verify_auth_boundary(fresh, interface)
     expected_vue = interface == "1"
     if json.loads(api(fresh, "app/preferences"))["alternative_webui_enabled"] != expected_vue:
         raise RuntimeError("Web interface selection did not match")
@@ -219,6 +245,7 @@ for interface in ("qui", "0", "1"):
     run(["docker", "restart", "-t", "30", fresh], timeout=45)
     ready(fresh, "v5.2.4")
     verify(fresh)
+    verify_auth_boundary(fresh, interface)
     if interface == "qui":
         verify_qui(fresh, renamed=True)
         restarted_state = run(["docker", "exec", fresh, "sha256sum", "/torrents/config/qui/.appbox-state.json"]).split()[0]
@@ -231,6 +258,7 @@ for interface in ("qui", "0", "1"):
         PASSWORD = "ChangedA1! " + secrets.token_urlsafe(24) + " ' \" $"
         fresh = start("changed-password", IMAGE, fresh_volume, "v5.2.4", "qui")
         verify(fresh)
+        verify_auth_boundary(fresh, "qui")
         verify_qui(fresh, renamed=True)
         changed_state = run(["docker", "exec", fresh, "sha256sum", "/torrents/config/qui/.appbox-state.json"]).split()[0]
         if changed_state == original_state:
@@ -262,6 +290,7 @@ run(["docker", "exec", "--user", "1000:1000", baseline, "touch", "/torrents/comp
 stop(baseline)
 upgrade = start("upgrade", IMAGE, upgrade_vol, "v5.2.4", "qui")
 verify(upgrade)
+verify_auth_boundary(upgrade, "qui")
 if json.loads(api(upgrade, "app/preferences"))["max_active_downloads"] != 17:
     raise RuntimeError("Upgrade replaced existing preferences")
 if not any(t["hash"] == info_hash for t in json.loads(api(upgrade, "torrents/info"))):

@@ -3,7 +3,7 @@
 import subprocess
 import sys
 
-EXPECTED = "repo.cylo.net/qbittorrent:5.2.4_2.0.15.0-1"
+EXPECTED = "repo.cylo.net/qbittorrent:5.2.4_2.0.15.0-2"
 BASELINE = "repo.cylo.net/qbittorrent:5.2.4_2.0.15.0"
 
 def inspect(image):

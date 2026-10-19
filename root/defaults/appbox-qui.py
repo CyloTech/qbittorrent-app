@@ -4,6 +4,7 @@ import http.cookiejar
 import json
 import os
 from pathlib import Path
+import re
 import sqlite3
 import subprocess
 import sys
@@ -141,11 +142,10 @@ def configure():
 def installed_callback():
     if not PENDING.exists():
         return
+    # Appbox supplies "<id>" or "<id>?callback_token=<url-encoded token>".
     instance_id = os.environ.get('INSTANCE_ID', '')
-    if not instance_id or not all(c.isdigit() for c in instance_id):
-        # Release gates use an explicitly mocked non-production callback ID.
-        if instance_id != '41416-release-gate':
-            raise RuntimeError('Invalid Appbox instance ID')
+    if not re.fullmatch(r'[0-9]+(\?callback_token=[A-Za-z0-9._~%-]+)?', instance_id):
+        raise RuntimeError('Invalid Appbox instance ID')
     url = 'https://api.cylo.io/v1/apps/installed/' + instance_id
     for _ in range(120):
         result = subprocess.run(['curl', '-fsS', '--max-time', '10', '-X', 'POST',
