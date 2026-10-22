@@ -15,8 +15,10 @@ ENV QUI__HOST=127.0.0.1 QUI__PORT=7476 QUI__LOG_LEVEL=WARN \
 
 COPY root/defaults/qBittorrent.conf root/defaults/watched_folders.json root/defaults/qbtcheck root/defaults/appbox-qui.py root/defaults/qui-nginx.conf /defaults/
 COPY root/etc/ /etc/
+COPY root/usr/local/bin/appbox-installed-callback /usr/local/bin/appbox-installed-callback
 RUN chmod 755 /etc/cont-init.d/30-config /etc/cont-init.d/35-qui \
     /etc/services.d/qbittorrent/run /etc/services.d/qbtcheck/run \
-    /etc/services.d/qui/run /etc/services.d/qui-proxy/run /defaults/qbtcheck /defaults/appbox-qui.py
+    /etc/services.d/qui/run /etc/services.d/qui-proxy/run /etc/services.d/appbox-callback/run \
+    /defaults/qbtcheck /defaults/appbox-qui.py /usr/local/bin/appbox-installed-callback
 
 EXPOSE 8080

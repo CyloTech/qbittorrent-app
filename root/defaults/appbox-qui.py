@@ -20,6 +20,7 @@ DATA = Path('/torrents/config/qui')
 STATE = DATA / '.appbox-state.json'
 READY = Path('/run/qui-proxy/ready')
 PENDING = Path('/run/qui-proxy/callback-pending')
+CALLBACK_HELPER = '/usr/local/bin/appbox-installed-callback'
 QBT = 'http://127.0.0.1:9080'
 QUI = 'http://127.0.0.1:7476'
 PASSWORD = os.environ['PASSWORD']
@@ -146,17 +147,11 @@ def installed_callback():
     instance_id = os.environ.get('INSTANCE_ID', '')
     if not re.fullmatch(r'[0-9]+(\?callback_token=[A-Za-z0-9._~%-]+)?', instance_id):
         raise RuntimeError('Invalid Appbox instance ID')
-    url = 'https://api.cylo.io/v1/apps/installed/' + instance_id
-    for _ in range(120):
-        result = subprocess.run(['curl', '-fsS', '--max-time', '10', '-X', 'POST',
-                                 '-H', 'Accept: application/json',
-                                 '-H', 'Content-Type: application/json', url],
-                                capture_output=True, timeout=15)
-        if result.returncode == 0:
-            PENDING.unlink()
-            return
-        time.sleep(5)
-    raise RuntimeError('Appbox installation callback did not succeed')
+    # The helper retries network errors, 408, 429 and 5xx and stops on any
+    # other status: a rejected callback (e.g. 401 once the instance is no
+    # longer waiting for one) cannot succeed later, so it is not repeated.
+    subprocess.run([CALLBACK_HELPER], check=False)
+    PENDING.unlink(missing_ok=True)
 
 
 def main():

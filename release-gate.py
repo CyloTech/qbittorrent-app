@@ -226,10 +226,11 @@ callback_log.touch()
 callback_log.chmod(0o666)
 
 mock = Path(stage.name) / "curl"
+# appbox-installed-callback reads the status from `-w %{http_code}`.
 mock.write_text('#!/bin/bash\nfor arg in "$@"; do\n'
-                ' if [[ "$arg" == "https://api.cylo.io/v1/apps/installed/' + INSTANCE_ID + '" ]]; then\n'
+                ' if [[ "$arg" == "https://api.cylo.net/v1/apps/installed/' + INSTANCE_ID + '" ]]; then\n'
                 '  printf "callback\\n" >> /release-gate/callback.log\n'
-                '  printf "HTTP/1.1 200 OK\\r\\n\\r\\n"\n'
+                '  printf "200"\n'
                 '  exit 0\n fi\n'
                 ' [[ "$arg" != https://api.cylo.io/* && "$arg" != https://api.cylo.net/* ]] || exit 88\n'
                 'done\nexec /usr/bin/curl "$@"\n')
