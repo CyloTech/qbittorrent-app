@@ -12,7 +12,7 @@ import tempfile
 import time
 import urllib.parse
 
-IMAGE = "repo.cylo.net/qbittorrent:5.2.4_2.0.15.0-3"
+IMAGE = "repo.cylo.net/qbittorrent:5.2.4_2.0.15.0-4"
 OLD = "repo.cylo.net/qbittorrent@sha256:7df0fd9b6ada07bb5cb82cfd00b5dee489eaf323c4014eb32cc1e6c5532c0a6a"
 if len(sys.argv) != 2 or sys.argv[1] != IMAGE:
     raise SystemExit("Unexpected image reference")
@@ -72,8 +72,7 @@ def ready(name, version):
         time.sleep(2)
     raise RuntimeError("qBittorrent readiness timed out")
 
-def start(label, image, vol, version, interface="0"):
-    global callback_count
+def launch(label, image, vol, interface="0"):
     name = prefix + "-" + label
     containers.append(name)
     run(["docker", "run", "-d", "--platform", "linux/amd64", "--name", name,
@@ -85,6 +84,11 @@ def start(label, image, vol, version, interface="0"):
          "-e", "LISTENING_PORT=6881", "-e", "TRACKER_PORT=9000", "-e", "WEBUI_PORT=8080",
          "-e", "ENABLE_VUETORRENT=" + interface, "-e", "PASSWORD=" + PASSWORD,
          image], timeout=180)
+    return name
+
+def start(label, image, vol, version, interface="0"):
+    global callback_count
+    name = launch(label, image, vol, interface)
     ready(name, version)
     callback_count += 1
     for _ in range(30):
@@ -153,6 +157,50 @@ def stop(name):
     run(["docker", "stop", "-t", "30", name], timeout=45)
     run(["docker", "rm", name])
     containers.remove(name)
+
+def exists(name, path):
+    return subprocess.run(["docker", "exec", name, "test", "-e", path], capture_output=True).returncode == 0
+
+def interrupted_first_start(interface):
+    """Restart after first-run setup but before the API accepts the callback.
+
+    A Cylo restart in that window used to lose the callback for good, leaving
+    the instance stuck as updating."""
+    global callback_count
+    down = Path(stage.name, "callback-down")
+    down.touch()
+    name = launch("interrupted-" + interface, IMAGE, volume("interrupted-" + interface), interface)
+    # qui sends the callback once its proxy is ready; the others after cont-init.
+    configured = "/run/qui-proxy/ready" if interface == "qui" else "/etc/app_configured"
+    for _ in range(150):
+        if exists(name, configured):
+            break
+        time.sleep(1)
+    else:
+        raise RuntimeError("First-run setup did not finish")
+    time.sleep(5)
+    run(["docker", "restart", "-t", "30", name], timeout=45)
+    # qBittorrent must start while the API is unreachable.
+    ready(name, "v5.2.4")
+    if callback_lines() != callback_count:
+        raise RuntimeError("Callback recorded while the API was unreachable")
+    down.unlink()
+    callback_count += 1
+    for _ in range(120):
+        if callback_lines() == callback_count:
+            break
+        time.sleep(1)
+    else:
+        raise RuntimeError("Restart before the callback lost it")
+    pending = "/run/qui-proxy/callback-pending" if interface == "qui" else "/etc/appbox_callback_pending"
+    for _ in range(15):
+        if not exists(name, pending):
+            break
+        time.sleep(1)
+    else:
+        raise RuntimeError("Pending callback flag was not cleared")
+    stop(name)
+    print("PASS: restart before the callback (" + interface + ") still sent it once", flush=True)
 
 
 def verify_qui(name, *, rename=False, renamed=False, torrent_hash=None):
@@ -226,11 +274,18 @@ callback_log.touch()
 callback_log.chmod(0o666)
 
 mock = Path(stage.name) / "curl"
-# appbox-installed-callback reads the status from `-w %{http_code}`.
+# appbox-installed-callback reads the status from `-w %{http_code}`; the
+# baseline image still greps a response header from api.cylo.io.
+# /release-gate/callback-down makes the API unreachable.
 mock.write_text('#!/bin/bash\nfor arg in "$@"; do\n'
                 ' if [[ "$arg" == "https://api.cylo.net/v1/apps/installed/' + INSTANCE_ID + '" ]]; then\n'
+                '  [[ ! -e /release-gate/callback-down ]] || exit 7\n'
                 '  printf "callback\\n" >> /release-gate/callback.log\n'
                 '  printf "200"\n'
+                '  exit 0\n fi\n'
+                ' if [[ "$arg" == "https://api.cylo.io/v1/apps/installed/' + INSTANCE_ID + '" ]]; then\n'
+                '  printf "callback\\n" >> /release-gate/callback.log\n'
+                '  printf "HTTP/1.1 200 OK\\r\\n\\r\\n"\n'
                 '  exit 0\n fi\n'
                 ' [[ "$arg" != https://api.cylo.io/* && "$arg" != https://api.cylo.net/* ]] || exit 88\n'
                 'done\nexec /usr/bin/curl "$@"\n')
@@ -283,6 +338,9 @@ for interface in ("qui", "0", "1"):
         print("PASS: app password change synchronized qui and its qBittorrent connection", flush=True)
     stop(fresh)
     print("PASS: fresh " + interface + ", restart, authentication, UID 1000, callback", flush=True)
+
+for interface in ("0", "qui"):
+    interrupted_first_start(interface)
 
 run(["docker", "pull", "--platform", "linux/amd64", OLD], timeout=300)
 upgrade_vol = volume("upgrade-data")
