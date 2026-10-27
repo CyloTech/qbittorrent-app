@@ -4,8 +4,8 @@ app:
   description: BitTorrent client with a web interface.
 image:
   name: repo.cylo.net/qbittorrent
-  version: 5.2.4_2.0.15.0-4
-  tag: 5.2.4_2.0.15.0-4
+  version: 5.2.4_2.0.15.0-5
+  tag: 5.2.4_2.0.15.0-5
   digest: repo.cylo.net/qbittorrent@sha256:b41d7757d9c2c401367e2343b46c50dbf4eb5d562d1d3e912e792a2b59e825f4
 container:
   memory: 100

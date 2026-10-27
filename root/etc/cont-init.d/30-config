@@ -11,10 +11,8 @@ esac
 QBITTORRENT_CONFIG=/torrents/config/qBittorrent/qBittorrent.conf
 QBITTORRENT_LOCKFILE=/torrents/config/qBittorrent/lockfile
 
-# An optional fourth argument of "keep-existing" leaves a key that is already set.
 set_qbt_config_value() {
-  QBT_CONFIG="${QBITTORRENT_CONFIG}" QBT_SECTION="$1" QBT_PREF_KEY="$2" QBT_PREF_VALUE="$3" \
-    QBT_KEEP_EXISTING="${4:-}" python3 - <<'PY'
+  QBT_CONFIG="${QBITTORRENT_CONFIG}" QBT_SECTION="$1" QBT_PREF_KEY="$2" QBT_PREF_VALUE="$3" python3 - <<'PY'
 from pathlib import Path
 import os
 
@@ -22,7 +20,6 @@ path = Path(os.environ["QBT_CONFIG"])
 section = os.environ["QBT_SECTION"]
 key = os.environ["QBT_PREF_KEY"]
 value = os.environ["QBT_PREF_VALUE"]
-keep_existing = os.environ["QBT_KEEP_EXISTING"] == "keep-existing"
 
 lines = path.read_text().splitlines() if path.exists() else []
 section_header = f"[{section}]"
@@ -45,14 +42,38 @@ for index in range(section_start + 1, len(lines)):
 setting = f"{key}={value}"
 for index in range(section_start + 1, section_end):
     if lines[index].startswith(f"{key}="):
-        if keep_existing:
-            raise SystemExit(0)
         lines[index] = setting
         break
 else:
     lines.insert(section_end, setting)
 
 path.write_text("\n".join(lines) + "\n")
+PY
+}
+
+# Remove "key=value" from a section, leaving any other value of the key.
+remove_qbt_config_value() {
+  QBT_CONFIG="${QBITTORRENT_CONFIG}" QBT_SECTION="$1" QBT_PREF_KEY="$2" QBT_PREF_VALUE="$3" python3 - <<'PY'
+from pathlib import Path
+import os
+
+path = Path(os.environ["QBT_CONFIG"])
+if not path.exists():
+    raise SystemExit(0)
+setting = f'{os.environ["QBT_PREF_KEY"]}={os.environ["QBT_PREF_VALUE"]}'
+section_header = f'[{os.environ["QBT_SECTION"]}]'
+
+lines = path.read_text().splitlines()
+kept, in_section = [], False
+for line in lines:
+    stripped = line.strip()
+    if stripped.startswith("[") and stripped.endswith("]"):
+        in_section = stripped == section_header
+    if in_section and line == setting:
+        continue
+    kept.append(line)
+if kept != lines:
+    path.write_text("\n".join(kept) + "\n")
 PY
 }
 
@@ -205,10 +226,15 @@ if [[ ! -f /etc/app_configured ]]; then
   touch /etc/app_configured
 fi
 
-# libtorrent 2 memory-maps torrent data by default. On a shared host its page
-# faults trigger large readahead allocations that evict other Cylos' page
-# cache. Use POSIX reads and writes unless a disk I/O type is already chosen.
-set_qbt_config_value "BitTorrent" "Session\\DiskIOType" "Posix" keep-existing
+# 5.2.4_2.0.15.0-3 and -4 forced POSIX disk I/O. libtorrent 2.0 runs it on its
+# single network thread, so one slow read (a cloud-drive mount, a busy disk)
+# froze the whole engine. Clear that value once so libtorrent's default applies
+# again; a POSIX choice made after this is kept.
+DISKIO_CLEARED_MARKER=/torrents/config/qBittorrent/.appbox-posix-default-cleared
+if [[ ! -e "${DISKIO_CLEARED_MARKER}" ]]; then
+  remove_qbt_config_value "BitTorrent" "Session\\DiskIOType" "Posix"
+  touch "${DISKIO_CLEARED_MARKER}"
+fi
 
 configure_webui_password
 configure_reverse_proxy_trust
