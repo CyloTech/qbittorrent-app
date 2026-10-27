@@ -6,7 +6,7 @@ image:
   name: repo.cylo.net/qbittorrent
   version: 5.2.4_2.0.15.0-5
   tag: 5.2.4_2.0.15.0-5
-  digest: repo.cylo.net/qbittorrent@sha256:b41d7757d9c2c401367e2343b46c50dbf4eb5d562d1d3e912e792a2b59e825f4
+  digest: repo.cylo.net/qbittorrent@sha256:757ae20ba44a289f03c760281d0ec36c831f598b75f8b62dea0f4a19dda7935a
 container:
   memory: 100
   memory_swap: 100
